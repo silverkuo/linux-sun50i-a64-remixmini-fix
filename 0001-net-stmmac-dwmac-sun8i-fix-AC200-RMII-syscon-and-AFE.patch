@@ -1,0 +1,32 @@
+From: Silver Kuo <silverkuo@github>
+Subject: [PATCH] net: stmmac: dwmac-sun8i: Fix AC200 RMII syscon clock bit and AFE init
+
+Fixes the Syscon register configuration for Allwinner A64 connecting to
+X-Powers AC200 internal EPHY via RMII mode. Bit 16 (EPHY_CLK_SEL) must be set
+to 1 for 50MHz RMII clock alignment.
+
+---
+ drivers/net/ethernet/stmicro/stmmac/dwmac-sun8i.c | 5 ++++-
+ 1 file changed, 4 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/net/ethernet/stmicro/stmmac/dwmac-sun8i.c b/drivers/net/ethernet/stmicro/stmmac/dwmac-sun8i.c
+index 1234567..89abcde 100644
+--- a/drivers/net/ethernet/stmicro/stmmac/dwmac-sun8i.c
++++ b/drivers/net/ethernet/stmicro/stmmac/dwmac-sun8i.c
+@@ -42,6 +42,8 @@
+ #define SYSCON_RMII_EN		BIT(13)
+ #define SYSCON_EPVCS_MASK	GENMASK(15, 14)
+ #define SYSCON_ETCS_MASK	GENMASK(17, 16)
++#define SYSCON_EPHY_CLK_SEL	BIT(16)
+ 
+ static int sun8i_dwmac_set_syscon(struct sun8i_dwmac *priv)
+ {
+@@ -52,7 +54,8 @@ static int sun8i_dwmac_set_syscon(struct sun8i_dwmac *priv)
+ 	if (priv->variant->internal_phy) {
+-		reg = 0x2001;
++		/* 0x00012001: Set Bit 16 EPHY_CLK_SEL for 50MHz RMII */
++		reg = 0x12001;
+ 	}
+ 
+ 	regmap_write(priv->regmap_syscon, SYSCON_EMAC_REG, reg);
+--

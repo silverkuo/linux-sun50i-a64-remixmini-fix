@@ -1,0 +1,56 @@
+/dts-v1/;
+#include "sun50i-a64.dtsi"
+#include "sun50i-a64-cpu-opp.dtsi"
+
+/ {
+    model = "Jide Remix Mini RM1G";
+    compatible = "jide,remix-mini-rm1g", "allwinner,sun50i-a64";
+
+    aliases {
+        ethernet0 = &emac;
+    };
+};
+
+/* 1. 啟用 R_PWM 導出 24MHz 時鐘給 AC200 CKI */
+&r_pwm {
+    pinctrl-names = "default";
+    pinctrl-0 = <&r_pwm_pin>;
+    status = "okay";
+};
+
+&r_ccu {
+    assigned-clocks = <&r_ccu CLK_APB0_PWM>;
+    assigned-clock-rates = <24000000>;
+};
+
+/* 2. AXP813 PMIC DLDO2 供電 3.1V */
+&r_rsb {
+    axp813: pmic@3a3 {
+        regulators {
+            dldo2_reg: dldo2 {
+                regulator-always-on;
+                regulator-min-microvolt = <3100000>;
+                regulator-max-microvolt = <3100000>;
+                regulator-name = "vcc-ephy";
+            };
+        };
+    };
+};
+
+/* 3. pinctrl 修正：剔除 PD14 */
+&pio {
+    rmii_pins: rmii-pins {
+        pins = "PD10", "PD11", "PD13", "PD17", "PD18", "PD19", "PD20", "PD22", "PD23";
+        function = "emac";
+    };
+};
+
+/* 4. EMAC 節點綁定 */
+&emac {
+    pinctrl-names = "default";
+    pinctrl-0 = <&rmii_pins>;
+    phy-mode = "rmii";
+    phy-handle = <&ac200_ephy>;
+    phy-supply = <&dldo2_reg>;
+    status = "okay";
+};
