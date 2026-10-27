@@ -1,0 +1,10 @@
+verbosity=1
+bootlogo=false
+console=both
+disp_mode=1920x1080p60
+overlay_prefix=sun50i-a64
+rootdev=UUID=5711bf53-a43e-4d38-a9ef-927212664ee3
+rootfstype=ext4
+fdtfile=allwinner/sun50i-h64-remix-ac200.dtb
+#fdtfile=allwinner/sun50i-h64-remix-try-eth.dtb
+usbstoragequirks=0x2537:0x1066:u,0x2537:0x1068:u
