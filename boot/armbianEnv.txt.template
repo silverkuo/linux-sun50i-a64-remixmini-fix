@@ -1,0 +1,22 @@
+# ==============================================================================
+# Armbian Environment Configuration Template for Remix Mini (RM1G)
+#
+# IMPORTANT:
+#   DO NOT directly overwrite your existing /boot/armbianEnv.txt with this file,
+#   as doing so will overwrite your system's unique root partition UUID (rootdev)!
+#
+#   To switch to the AC200 Ethernet DTB, add or modify the following line in
+#   your existing /boot/armbianEnv.txt:
+#     fdtfile=allwinner/sun50i-h64-remix-ac200.dtb
+# ==============================================================================
+
+verbosity=1
+bootlogo=false
+console=both
+disp_mode=1920x1080p60
+overlay_prefix=sun50i-a64
+# Keep your own rootdev UUID, do NOT copy this example UUID directly:
+# rootdev=UUID=YOUR-ROOTFS-UUID-HERE
+rootfstype=ext4
+fdtfile=allwinner/sun50i-h64-remix-ac200.dtb
+usbstoragequirks=0x2537:0x1066:u,0x2537:0x1068:u

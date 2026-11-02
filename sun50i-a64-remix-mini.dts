@@ -1,56 +1,103 @@
+// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
+/*
+ * Device Tree Source for Jide Remix Mini (RM1G) with X-Powers AC200 Ethernet
+ *
+ * Extends the upstream arch/arm64/boot/dts/allwinner/sun50i-h64-remix-mini-pc.dts
+ * by configuring the internal EMAC controller, MDIO bus, AXP803/813 PMIC DLDO2 (3.1V),
+ * pinctrl RMII lines (excluding PD14), and X-Powers AC200 EPHY via I2C-1.
+ */
+
 /dts-v1/;
-#include "sun50i-a64.dtsi"
-#include "sun50i-a64-cpu-opp.dtsi"
+#include "sun50i-h64-remix-mini-pc.dts"
 
 / {
-    model = "Jide Remix Mini RM1G";
-    compatible = "jide,remix-mini-rm1g", "allwinner,sun50i-a64";
+	model = "Jide Remix Mini PC (AC200 Ethernet)";
+	compatible = "jide,remix-mini-rm1g", "jide,remix-mini-pc",
+	             "allwinner,sun50i-h64", "allwinner,sun50i-a64";
 
-    aliases {
-        ethernet0 = &emac;
-    };
+	aliases {
+		ethernet0 = &emac;
+	};
 };
 
-/* 1. 啟用 R_PWM 導出 24MHz 時鐘給 AC200 CKI */
-&r_pwm {
-    pinctrl-names = "default";
-    pinctrl-0 = <&r_pwm_pin>;
-    status = "okay";
+&sid {
+	ephy_calib: ephy-calib@2c {
+		reg = <0x2c 0x02>;
+	};
+	ac200_bg: ac200-bg@30 {
+		reg = <0x30 0x02>;
+	};
 };
 
-&r_ccu {
-    assigned-clocks = <&r_ccu CLK_APB0_PWM>;
-    assigned-clock-rates = <24000000>;
-};
-
-/* 2. AXP813 PMIC DLDO2 供電 3.1V */
-&r_rsb {
-    axp813: pmic@3a3 {
-        regulators {
-            dldo2_reg: dldo2 {
-                regulator-always-on;
-                regulator-min-microvolt = <3100000>;
-                regulator-max-microvolt = <3100000>;
-                regulator-name = "vcc-ephy";
-            };
-        };
-    };
-};
-
-/* 3. pinctrl 修正：剔除 PD14 */
+/* 1. Pinmux: exclude PD14 to prevent interference on Remix Mini hardware */
 &pio {
-    rmii_pins: rmii-pins {
-        pins = "PD10", "PD11", "PD13", "PD17", "PD18", "PD19", "PD20", "PD22", "PD23";
-        function = "emac";
-    };
+	rmii_pins: rmii-pins {
+		pins = "PD10", "PD11", "PD13", "PD17", "PD18", "PD19", "PD20", "PD22", "PD23";
+		function = "emac";
+		drive-strength = <40>;
+	};
 };
 
-/* 4. EMAC 節點綁定 */
+/* 2. PMIC: Power up AC200 analog core via DLDO2 at 3.1V */
+&dldo2 {
+	regulator-name = "dldo2";
+	regulator-min-microvolt = <3100000>;
+	regulator-max-microvolt = <3100000>;
+	regulator-always-on;
+};
+
+&dc1sw {
+	regulator-always-on;
+};
+
+/* 3. AC200 Multi-Function Device (MFD) on TWI1 (I2C-1, 0x01c2ac00, slave 0x10) */
+&i2c1 {
+	pinctrl-names = "default";
+	pinctrl-0 = <&i2c1_pins>;
+	status = "okay";
+	clock-frequency = <400000>;
+
+	ac200: mfd@10 {
+		compatible = "x-powers,ac200";
+		reg = <0x10>;
+		clocks = <&osc24M>;
+		nvmem-cells = <&ac200_bg>;
+		nvmem-cell-names = "bandgap";
+
+		ac200_ephy_ctl: syscon {
+			compatible = "x-powers,ac200-ephy-ctl";
+			nvmem-cells = <&ephy_calib>;
+			nvmem-cell-names = "calibration";
+			#clock-cells = <0>;
+			#reset-cells = <0>;
+			phy-mode = "rmii";
+			status = "okay";
+			x-powers,led-polarity = <0>;
+			phy-address = <0>;
+		};
+	};
+};
+
+/* 4. EMAC controller with internal MDIO and AC200 EPHY binding */
 &emac {
-    pinctrl-names = "default";
-    pinctrl-0 = <&rmii_pins>;
-    phy-mode = "rmii";
-    phy-handle = <&ac200_ephy>;
-    phy-supply = <&dldo2_reg>;
-    status = "okay";
+	pinctrl-names = "default";
+	pinctrl-0 = <&rmii_pins>;
+	phy-mode = "rmii";
+	phy-handle = <&ac200_ephy>;
+	phy-supply = <&dldo2>;
+	local-mac-address = [02 12 34 56 78 9a];
+	status = "okay";
+
+	mdio {
+		compatible = "snps,dwmac-mdio";
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		ac200_ephy: ethernet-phy@0 {
+			compatible = "ethernet-phy-ieee802.3-c22";
+			reg = <0>;
+			clocks = <&ac200_ephy_ctl>;
+			resets = <&ac200_ephy_ctl>;
+		};
+	};
 };

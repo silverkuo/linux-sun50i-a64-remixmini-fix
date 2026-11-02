@@ -1,0 +1,95 @@
+From 1234567890abcdef1234567890abcdef12345678 Mon Sep 17 00:00:00 2001
+From: Silver Kuo <silverkuo@hotmail.com>
+Date: Mon, 2 Nov 2026 16:00:00 +0800
+Subject: [PATCH] net: stmmac: dwmac-sun8i: Add AC200 RMII support for Jide Remix Mini (RM1G)
+
+On the Jide Remix Mini PC (RM1G, Allwinner A64 / sun50i-a64), the SoC
+connects to an external X-Powers AC200 EPHY via RMII mode.
+To ensure stable networking on this hardware without regressing other boards:
+
+1. Guard modifications with of_machine_is_compatible("jide,remix-mini-rm1g")
+   and of_machine_is_compatible("jide,remix-mini-pc").
+2. Bypass EMAC_BASIC_CTL1 Bit 0 (SOFT_RST) which causes a permanent hardware
+   deadlock on RM1G due to RMII clock dependency.
+3. Assert TX DMA channel start (Bit 30) when activating the interface.
+4. Set Syscon EMAC register to 0x00012001 (Bit 16 EPHY_CLK_SEL) to align
+   with the 50MHz RMII clock from the AC200.
+
+Signed-off-by: Silver Kuo <silverkuo@hotmail.com>
+---
+diff --git a/drivers/net/ethernet/stmicro/stmmac/dwmac-sun8i.c b/drivers/net/ethernet/stmicro/stmmac/dwmac-sun8i.c
+index ce8367b..84fcd08 100644
+--- a/drivers/net/ethernet/stmicro/stmmac/dwmac-sun8i.c
++++ b/drivers/net/ethernet/stmicro/stmmac/dwmac-sun8i.c
+@@ -621,6 +621,14 @@ static void sun8i_dwmac_core_init(struct mac_device_info *hw,
+ 	writel(v, ioaddr + EMAC_BASIC_CTL1);
+ }
+ 
++
++/* Check if running on Jide Remix Mini (RM1G) */
++static inline bool is_remix_mini(void)
++{
++	return of_machine_is_compatible("jide,remix-mini-rm1g") ||
++	       of_machine_is_compatible("jide,remix-mini-pc");
++}
++
+ static void sun8i_dwmac_set_mac(void __iomem *ioaddr, bool enable)
+ {
+ 	u32 t, r;
+@@ -630,9 +638,18 @@ static void sun8i_dwmac_set_mac(void __iomem *ioaddr, bool enable)
+ 	if (enable) {
+ 		t |= EMAC_TX_TRANSMITTER_EN;
+ 		r |= EMAC_RX_RECEIVER_EN;
++		if (is_remix_mini()) {
++			/* Remix Mini: Assert TX/RX DMA Start bits */
++			t |= BIT(30);
++			r |= BIT(30) | BIT(29) | BIT(27);
++		}
+ 	} else {
+ 		t &= ~EMAC_TX_TRANSMITTER_EN;
+ 		r &= ~EMAC_RX_RECEIVER_EN;
++		if (is_remix_mini()) {
++			t &= ~BIT(30);
++			r &= ~(BIT(30) | BIT(29) | BIT(27));
++		}
+ 	}
+ 	writel(t, ioaddr + EMAC_TX_CTL0);
+ 	writel(r, ioaddr + EMAC_RX_CTL0);
+@@ -754,6 +771,18 @@ static int sun8i_dwmac_reset(struct stmmac_priv *priv)
+ 	u32 v;
+ 	int err;
+ 
++	/*
++	 * Remix Mini PC (Allwinner A64/H64 + AC200 RMII):
++	 * Writing 1 to EMAC_BASIC_CTL1 Bit 0 (SOFT_RST) causes a permanent
++	 * hardware deadlock on this board because the AC200 50MHz RMII clock
++	 * cannot feed back until DMA starts. Hardware reset is handled safely
++	 * by CCU bus reset.
++	 */
++	if (is_remix_mini()) {
++		dev_info(priv->device, "Remix Mini: Bypassing SOFT_RST deadlock\n");
++		return 0;
++	}
++
+ 	v = readl(priv->ioaddr + EMAC_BASIC_CTL1);
+ 	writel(v | 0x01, priv->ioaddr + EMAC_BASIC_CTL1);
+ 
+@@ -1032,6 +1061,15 @@ static int sun8i_dwmac_set_syscon(struct device *dev,
+ 		return -EINVAL;
+ 	}
+ 
++	if (is_remix_mini()) {
++		/*
++		 * Remix Mini PC: Force exact Syscon value 0x00012001.
++		 * Bit 16 (ETCS_EXT_RMII / EPHY_CLK_SEL) must be 1 to select
++		 * internal clock channel from AC200 E_TXCK 50MHz reference.
++		 */
++		reg = 0x00012001;
++	}
++
+ 	regmap_field_write(gmac->regmap_field, reg);
+ 
+ 	return 0;
+
+--
+2.43.0

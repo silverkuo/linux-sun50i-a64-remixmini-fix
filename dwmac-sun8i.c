@@ -621,6 +621,14 @@ static void sun8i_dwmac_core_init(struct mac_device_info *hw,
 	writel(v, ioaddr + EMAC_BASIC_CTL1);
 }
 
+
+/* Check if running on Jide Remix Mini (RM1G) */
+static inline bool is_remix_mini(void)
+{
+	return of_machine_is_compatible("jide,remix-mini-rm1g") ||
+	       of_machine_is_compatible("jide,remix-mini-pc");
+}
+
 static void sun8i_dwmac_set_mac(void __iomem *ioaddr, bool enable)
 {
 	u32 t, r;
@@ -628,11 +636,20 @@ static void sun8i_dwmac_set_mac(void __iomem *ioaddr, bool enable)
 	t = readl(ioaddr + EMAC_TX_CTL0);
 	r = readl(ioaddr + EMAC_RX_CTL0);
 	if (enable) {
-		t |= 0xC0000000; /* Set Bit 31 (TX_EN) AND Bit 30 (TX_DMA_START) */
-		r |= 0xB8000000; /* Set Bit 31 (RX_EN), Bit 30 (RX_DMA_START), Bit 29, Bit 27 */
+		t |= EMAC_TX_TRANSMITTER_EN;
+		r |= EMAC_RX_RECEIVER_EN;
+		if (is_remix_mini()) {
+			/* Remix Mini: Assert TX/RX DMA Start bits */
+			t |= BIT(30);
+			r |= BIT(30) | BIT(29) | BIT(27);
+		}
 	} else {
-		t &= ~0xC0000000;
-		r &= ~0xB8000000;
+		t &= ~EMAC_TX_TRANSMITTER_EN;
+		r &= ~EMAC_RX_RECEIVER_EN;
+		if (is_remix_mini()) {
+			t &= ~BIT(30);
+			r &= ~(BIT(30) | BIT(29) | BIT(27));
+		}
 	}
 	writel(t, ioaddr + EMAC_TX_CTL0);
 	writel(r, ioaddr + EMAC_RX_CTL0);
@@ -751,12 +768,34 @@ static void sun8i_dwmac_flow_ctrl(struct mac_device_info *hw,
 
 static int sun8i_dwmac_reset(struct stmmac_priv *priv)
 {
+	u32 v;
+	int err;
+
 	/*
 	 * Remix Mini PC (Allwinner A64/H64 + AC200 RMII):
-	 * Writing 1 to EMAC_BASIC_CTL1 Bit 0 (SOFT_RST) causes a permanent hardware deadlock.
-	 * Hardware reset is handled safely by CCU bus reset.
+	 * Writing 1 to EMAC_BASIC_CTL1 Bit 0 (SOFT_RST) causes a permanent
+	 * hardware deadlock on this board because the AC200 50MHz RMII clock
+	 * cannot feed back until DMA starts. Hardware reset is handled safely
+	 * by CCU bus reset.
 	 */
-	dev_info(priv->device, "Remix Mini: Bypassing SOFT_RST deadlock\n");
+	if (is_remix_mini()) {
+		dev_info(priv->device, "Remix Mini: Bypassing SOFT_RST deadlock\n");
+		return 0;
+	}
+
+	v = readl(priv->ioaddr + EMAC_BASIC_CTL1);
+	writel(v | 0x01, priv->ioaddr + EMAC_BASIC_CTL1);
+
+	/* The timeout was previoulsy set to 10ms, but some board (OrangePI0)
+	 * need more if no cable plugged. 100ms seems OK
+	 */
+	err = readl_poll_timeout(priv->ioaddr + EMAC_BASIC_CTL1, v,
+				 !(v & 0x01), 100, 100000);
+
+	if (err) {
+		dev_err(priv->device, "EMAC reset timeout\n");
+		return err;
+	}
 	return 0;
 }
 
@@ -954,7 +993,7 @@ static int sun8i_dwmac_set_syscon(struct device *dev,
 		/* of_mdio_parse_addr returns a valid (0 ~ 31) PHY
 		 * address. No need to mask it again.
 		 */
-		reg |= 1 << H3_EPHY_ADDR_SHIFT;
+		reg |= ret << H3_EPHY_ADDR_SHIFT;
 	} else {
 		/* For SoCs without internal PHY the PHY selection bit should be
 		 * set to 0 (external PHY).
@@ -1003,7 +1042,7 @@ static int sun8i_dwmac_set_syscon(struct device *dev,
 	if (gmac->variant->support_rmii)
 		reg &= ~SYSCON_RMII_EN;
 
-	switch (plat->phy_interface) {
+	switch (plat->mac_interface) {
 	case PHY_INTERFACE_MODE_MII:
 		/* default */
 		break;
@@ -1018,12 +1057,19 @@ static int sun8i_dwmac_set_syscon(struct device *dev,
 		break;
 	default:
 		dev_err(dev, "Unsupported interface mode: %s",
-			phy_modes(plat->phy_interface));
+			phy_modes(plat->mac_interface));
 		return -EINVAL;
 	}
 
-	/* Remix Mini PC: Force exact Syscon value 0x00012001 */
-	reg = 0x00012001;
+	if (is_remix_mini()) {
+		/*
+		 * Remix Mini PC: Force exact Syscon value 0x00012001.
+		 * Bit 16 (ETCS_EXT_RMII / EPHY_CLK_SEL) must be 1 to select
+		 * internal clock channel from AC200 E_TXCK 50MHz reference.
+		 */
+		reg = 0x00012001;
+	}
+
 	regmap_field_write(gmac->regmap_field, reg);
 
 	return 0;
@@ -1222,7 +1268,7 @@ static int sun8i_dwmac_probe(struct platform_device *pdev)
 	/* platform data specifying hardware features and callbacks.
 	 * hardware features were copied from Allwinner drivers.
 	 */
-	plat_dat->phy_interface = interface;
+	plat_dat->mac_interface = interface;
 	plat_dat->rx_coe = STMMAC_RX_COE_TYPE2;
 	plat_dat->tx_coe = 1;
 	plat_dat->flags |= STMMAC_FLAG_HAS_SUN8I;
@@ -1335,7 +1381,7 @@ MODULE_DEVICE_TABLE(of, sun8i_dwmac_match);
 
 static struct platform_driver sun8i_dwmac_driver = {
 	.probe  = sun8i_dwmac_probe,
-	.remove = sun8i_dwmac_remove,
+	.remove_new = sun8i_dwmac_remove,
 	.shutdown = sun8i_dwmac_shutdown,
 	.driver = {
 		.name           = "dwmac-sun8i",

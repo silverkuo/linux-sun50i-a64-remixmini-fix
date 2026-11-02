@@ -1,0 +1,14 @@
+[Unit]
+Description=Remix Mini RM1G AC200 Ethernet Hardware Initialization
+Documentation=https://github.com/silverkuo/linux-sun50i-a64-remixmini-fix
+Before=network-pre.target systemd-networkd.service NetworkManager.service networking.service
+Wants=network-pre.target
+DefaultDependencies=no
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/init-ac200.sh
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
